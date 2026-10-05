@@ -1,0 +1,7 @@
+# Copy to config/application.properties or set these environment variables.
+# Use an Oracle application account with only required schema privileges.
+db.url=jdbc:oracle:thin:@//localhost:1521/FREEPDB1
+db.username=inventory_app
+db.password=CHANGE_ME
+# Optional: set to the schema owner when connecting with a restricted runtime user.
+# db.schema=INVENTORY_OWNER

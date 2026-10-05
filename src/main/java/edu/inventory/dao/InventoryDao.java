@@ -1,0 +1,53 @@
+package edu.inventory.dao;
+
+import edu.inventory.config.Database;
+import edu.inventory.model.InventoryData.*;
+import edu.inventory.model.Role;
+import edu.inventory.model.Session;
+import edu.inventory.security.PasswordHasher;
+import java.math.BigDecimal;
+import java.sql.*;
+import java.time.LocalDate;
+import java.util.*;
+
+/** JDBC repository. All SQL is parameterized; stock mutations lock the product row. */
+public final class InventoryDao {
+    private static void bind(PreparedStatement s, Object... values) throws SQLException { for(int i=0;i<values.length;i++){if(values[i]==null)s.setNull(i+1,Types.VARCHAR);else s.setObject(i+1,values[i]);} }
+    public Session login(String username, char[] password) throws SQLException {
+        String sql="select u.user_id,u.username,u.password_hash,r.role_name from app_user u join app_role r on r.role_id=u.role_id where lower(u.username)=lower(?) and u.active='Y'";
+        try(Connection c=Database.connect(); PreparedStatement s=c.prepareStatement(sql)){s.setString(1,username);try(ResultSet r=s.executeQuery()){if(!r.next()||!PasswordHasher.verify(password,r.getString(3)))return null;return new Session(r.getLong(1),r.getString(2),Role.valueOf(r.getString(4).toUpperCase(Locale.ROOT).replace(' ','_')));}}
+    }
+    public Role activeRole(long userId){List<Role> found=list("select r.role_name from app_user u join app_role r on r.role_id=u.role_id where u.user_id=? and u.active='Y'",r->Role.valueOf(r.getString(1).toUpperCase(Locale.ROOT).replace(' ','_')),userId);return found.isEmpty()?null:found.get(0);}
+    public List<Category> categories(){return list("select category_id,category_name,description,active from category order by category_name",r->new Category(r.getLong(1),r.getString(2),r.getString(3),yes(r.getString(4))));}
+    public List<Supplier> suppliers(){return list("select supplier_id,supplier_name,contact_name,email,phone,address,active from supplier order by supplier_name",r->new Supplier(r.getLong(1),r.getString(2),r.getString(3),r.getString(4),r.getString(5),r.getString(6),yes(r.getString(7))));}
+    public List<Product> products(){return list("select product_id,sku,product_name,description,category_id,supplier_id,unit_of_measure,reorder_level,active from product order by sku",r->new Product(r.getLong(1),r.getString(2),r.getString(3),r.getString(4),r.getLong(5),r.getLong(6),r.getString(7),r.getBigDecimal(8),yes(r.getString(9))));}
+    public List<UserRow> users(){return list("select u.user_id,u.username,r.role_name,u.active from app_user u join app_role r on r.role_id=u.role_id order by u.username",r->new UserRow(r.getLong(1),r.getString(2),Role.valueOf(r.getString(3).toUpperCase(Locale.ROOT).replace(' ','_')),yes(r.getString(4))));}
+    public List<UserRow> reportUsers(){return list("select distinct u.user_id,u.username,r.role_name,u.active from app_user u join app_role r on r.role_id=u.role_id join stock_transaction t on t.user_id=u.user_id order by u.username",r->new UserRow(r.getLong(1),r.getString(2),Role.valueOf(r.getString(3).toUpperCase(Locale.ROOT).replace(' ','_')),yes(r.getString(4))));}
+    public List<StockRow> stock(String search){String sql="select p.product_id,p.sku,p.product_name,c.category_name,s.supplier_name,p.unit_of_measure,coalesce(sum(case t.transaction_type when 'IN' then t.quantity else -t.quantity end),0) qty,p.reorder_level,p.active from product p join category c on c.category_id=p.category_id join supplier s on s.supplier_id=p.supplier_id left join stock_transaction t on t.product_id=p.product_id where lower(p.sku||' '||p.product_name||' '||c.category_name||' '||s.supplier_name) like lower(?) group by p.product_id,p.sku,p.product_name,c.category_name,s.supplier_name,p.unit_of_measure,p.reorder_level,p.active order by p.sku";
+        return list(sql,r->{BigDecimal q=r.getBigDecimal(7),level=r.getBigDecimal(8);return new StockRow(r.getLong(1),r.getString(2),r.getString(3),r.getString(4),r.getString(5),r.getString(6),q,level,q.compareTo(level)<=0,yes(r.getString(9)));},"%"+search+"%");}
+    public List<TransactionRow> transactions(LocalDate from,LocalDate to,Long productId,Long userId,String type){StringBuilder sql=new StringBuilder("select t.transaction_id,p.sku,p.product_name,t.quantity,t.transaction_type,t.occurred_at,u.username,t.reference,t.note from stock_transaction t join product p on p.product_id=t.product_id join app_user u on u.user_id=t.user_id where 1=1");List<Object> args=new ArrayList<>();if(from!=null){sql.append(" and t.occurred_at>=?");args.add(Timestamp.valueOf(from.atStartOfDay()));}if(to!=null){sql.append(" and t.occurred_at<?");args.add(Timestamp.valueOf(to.plusDays(1).atStartOfDay()));}if(productId!=null){sql.append(" and p.product_id=?");args.add(productId);}if(userId!=null){sql.append(" and u.user_id=?");args.add(userId);}if(type!=null){sql.append(" and t.transaction_type=?");args.add(type);}sql.append(" order by t.occurred_at desc");return list(sql.toString(),r->new TransactionRow(r.getLong(1),r.getString(2),r.getString(3),r.getBigDecimal(4),r.getString(5),r.getTimestamp(6).toLocalDateTime(),r.getString(7),r.getString(8),r.getString(9)),args.toArray());}
+    private interface Mapper<T>{T map(ResultSet r)throws SQLException;}
+    private <T> List<T> list(String sql,Mapper<T> mapper,Object... args){try(Connection c=Database.connect();PreparedStatement s=c.prepareStatement(sql)){bind(s,args);try(ResultSet r=s.executeQuery()){List<T> out=new ArrayList<>();while(r.next())out.add(mapper.map(r));return out;}}catch(SQLException e){throw failure(e);}}
+    private static boolean yes(String v){return "Y".equals(v);}
+    private static RuntimeException failure(SQLException e){if(e.getErrorCode()==1||e.getErrorCode()==2290)return new IllegalArgumentException("A value already exists or violates a database rule.");if(e.getErrorCode()==2292)return new IllegalArgumentException("This record is in use and cannot be deleted. Deactivate it instead.");return new IllegalStateException("Database operation failed. Check the Oracle connection and schema setup.",e);}
+    public void saveCategory(Category x){if(x.id()==null)write("insert into category(category_id,category_name,description,active) values(category_seq.nextval,?,?,?)",x.name(),x.description(),yn(x.active()));else write("update category set category_name=?,description=?,active=? where category_id=?",x.name(),x.description(),yn(x.active()),x.id());}
+    public void saveSupplier(Supplier x){if(x.id()==null)write("insert into supplier(supplier_id,supplier_name,contact_name,email,phone,address,active) values(supplier_seq.nextval,?,?,?,?,?,?)",x.name(),x.contactName(),x.email(),x.phone(),x.address(),yn(x.active()));else write("update supplier set supplier_name=?,contact_name=?,email=?,phone=?,address=?,active=? where supplier_id=?",x.name(),x.contactName(),x.email(),x.phone(),x.address(),yn(x.active()),x.id());}
+    public void saveProduct(Product x){if(x.id()==null)write("insert into product(product_id,sku,product_name,description,category_id,supplier_id,unit_of_measure,reorder_level,active) values(product_seq.nextval,?,?,?,?,?,?,?,?)",x.sku(),x.name(),x.description(),x.categoryId(),x.supplierId(),x.unit(),x.reorderLevel(),yn(x.active()));else write("update product set sku=?,product_name=?,description=?,category_id=?,supplier_id=?,unit_of_measure=?,reorder_level=?,active=? where product_id=?",x.sku(),x.name(),x.description(),x.categoryId(),x.supplierId(),x.unit(),x.reorderLevel(),yn(x.active()),x.id());}
+    public void saveUser(Long id,String username,char[] password,Role role,boolean active){String hash=password==null||password.length==0?null:PasswordHasher.hash(password);String sql=id==null?"insert into app_user(user_id,username,password_hash,role_id,active) values(user_seq.nextval,?,?,(select role_id from app_role where role_name=?),?)":"update app_user set username=?,password_hash=coalesce(?,password_hash),role_id=(select role_id from app_role where role_name=?),active=? where user_id=?";if(id==null)write(sql,username,hash,roleLabel(role),yn(active));else write(sql,username,hash,roleLabel(role),yn(active),id);}
+    private static String roleLabel(Role r){return switch(r){case ADMIN->"Admin";case INVENTORY_STAFF->"Inventory Staff";case VIEWER->"Viewer";case SUPPLIER->"Supplier";};}
+    private static String yn(boolean b){return b?"Y":"N";}
+    public void deleteProduct(long id){write("delete from product where product_id=? and not exists(select 1 from stock_transaction where product_id=?)",id,id);}
+    private void write(String sql,Object...args){try(Connection c=Database.connect();PreparedStatement s=c.prepareStatement(sql)){bind(s,args);if(s.executeUpdate()==0&&sql.startsWith("delete"))throw new IllegalArgumentException("The product has stock history; deactivate it instead.");}catch(SQLException e){throw failure(e);}}
+    public void record(long productId,BigDecimal quantity,String type,long userId,String reference,String note){
+        String sql="select active from product where product_id=? for update";
+        try(Connection c=Database.connect()){
+            c.setAutoCommit(false);
+            try {
+                try(PreparedStatement lock=c.prepareStatement(sql)){lock.setLong(1,productId);try(ResultSet r=lock.executeQuery()){if(!r.next()||!yes(r.getString(1)))throw new IllegalArgumentException("Choose an active product.");}}
+                if("OUT".equals(type)){try(PreparedStatement q=c.prepareStatement("select coalesce(sum(case transaction_type when 'IN' then quantity else -quantity end),0) from stock_transaction where product_id=?")){q.setLong(1,productId);try(ResultSet r=q.executeQuery()){r.next();if(r.getBigDecimal(1).compareTo(quantity)<0)throw new IllegalArgumentException("Insufficient stock for this stock-out.");}}}
+                try(PreparedStatement ins=c.prepareStatement("insert into stock_transaction(transaction_id,product_id,quantity,transaction_type,occurred_at,user_id,reference,note) values(stock_transaction_seq.nextval,?,?,?,systimestamp,?,?,?)")){bind(ins,productId,quantity,type,userId,reference,note);ins.executeUpdate();}c.commit();
+            } catch(Exception e){try{c.rollback();}catch(SQLException ignored){}if(e instanceof RuntimeException re)throw re;if(e instanceof SQLException se)throw failure(se);throw new IllegalStateException("Stock movement failed.");}
+        }catch(SQLException e){throw failure(e);}
+    }
+    public void bootstrapAdmin(String username,char[] password){saveUser(null,username,password,Role.ADMIN,true);}
+}
