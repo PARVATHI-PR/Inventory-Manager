@@ -17,7 +17,8 @@ create table app_user (
   password_hash varchar2(300 char) not null,
   role_id number(10) not null references app_role(role_id),
   active char(1 char) default 'Y' not null check (active in ('Y','N')),
-  created_at timestamp default systimestamp not null
+  created_at timestamp default systimestamp not null,
+  supplier_id number(10)
 );
 create unique index app_user_username_uq on app_user(upper(username));
 
@@ -39,6 +40,8 @@ create table supplier (
   active char(1 char) default 'Y' not null check (active in ('Y','N'))
 );
 create unique index supplier_name_uq on supplier(upper(supplier_name));
+alter table app_user add constraint app_user_supplier_fk foreign key (supplier_id) references supplier(supplier_id);
+create index app_user_supplier_ix on app_user(supplier_id);
 
 create table product (
   product_id number(10) primary key,

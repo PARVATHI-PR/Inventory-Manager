@@ -58,16 +58,16 @@ The same entry points can be run from an IDE by selecting `edu.inventory.Bootstr
 
 ## Roles and permissions
 
-| Capability | Admin | Inventory Staff | Viewer | Supplier (reserved) |
+| Capability | Admin | Inventory Staff | Viewer | Supplier |
 |---|---:|---:|---:|---:|
-| View/search products, current stock, and movement history | Yes | Yes | Yes | No account in v1 |
-| Add/update products | Yes | Yes | No | No account in v1 |
-| Deactivate/delete products | Yes | No | No | No account in v1 |
-| Maintain categories and suppliers | Yes | No | No | No account in v1 |
-| Record stock-in/out | Yes | Yes | No | No account in v1 |
-| Create/update/disable users and assign roles | Yes | No | No | No account in v1 |
+| View/search products, current stock, and movement history | Yes | Yes | Yes | Own supplier only |
+| Add/update products | Yes | Yes | No | No |
+| Deactivate/delete products | Yes | No | No | No |
+| Maintain categories and suppliers | Yes | No | No | No |
+| Record stock-in/out | Yes | Yes | No | No |
+| Create/update/disable users and assign roles | Yes | No | No | No |
 
-Supplier is seeded only as a reserved role value. Supplier accounts and portal access are not implemented. Role checks are enforced in the service layer and the account's active role is rechecked for service operations, so changes take effect without trusting hidden UI controls.
+Admins create Supplier logins in the Users tab by selecting an active supplier. Each login is linked through `app_user.supplier_id`. Supplier users can view only their own product stock, related activity, and profile; service and DAO queries enforce this scope. Existing schemas apply `database/migrations/add_supplier_login.sql` once; fresh installs use `database/schema.sql`.
 
 ## Implemented features
 
@@ -101,5 +101,5 @@ Completed stock transactions cannot be edited or deleted in the UI or through th
 - Product quantity is derived from all movement rows; very large histories may later need a carefully maintained Oracle summary/materialized view for performance.
 - Password reset is Admin-operated; self-service recovery and lockout policy are not included.
 - Sales reports need sales/order/receipt data and prices; stock-outs alone do not calculate revenue.
-- Supplier login, supplier scheduling, due/payment tracking, and purchase-order accounting are intentionally out of scope.
+- Supplier scheduling, due/payment tracking, and purchase-order accounting are not implemented.
 - Transaction correction/adjustment entries are not implemented in v1.

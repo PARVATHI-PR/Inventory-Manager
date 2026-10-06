@@ -10,6 +10,7 @@ public final class Main {
         SwingUtilities.invokeLater(()->{
             try { UIManager.setLookAndFeel(UIManager.getSystemLookAndFeelClassName()); }
             catch(Exception ignored){}
+            edu.inventory.ui.AppTheme.install();
             if(GraphicsEnvironment.isHeadless()){System.err.println("A desktop environment is required to run the Swing application.");return;}
             new LoginFrame().setVisible(true);
         });
